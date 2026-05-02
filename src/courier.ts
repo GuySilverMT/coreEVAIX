@@ -33,13 +33,20 @@ export async function routePrompt(prompt: string): Promise<void> {
   const activeStatePath = path.join(process.cwd(), 'ACTIVE_STATE.md');
 
   try {
+    // AUTO-DETECT LOCAL MODEL
+    const tagsResponse = await fetch('http://localhost:11434/api/tags');
+    if (!tagsResponse.ok) throw new Error('Could not connect to Ollama to list models.');
+    const tagsData = await tagsResponse.json() as any;
+    if (!tagsData.models || tagsData.models.length === 0) throw new Error('Ollama is running, but no models are installed.');
+    let localModel = tagsData.models[0].name; // Auto-selects whatever is installed (like Granite)
+
     const response = await fetchWithBackoff('http://localhost:11434/api/generate', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'llama3', 
+        model: localModel, 
         prompt: prompt,
         system: systemInstruction,
         stream: false,

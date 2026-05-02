@@ -1,38 +1,56 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
-  output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "sqlite"
+  url      = env("DATABASE_URL")
 }
 
 model Provider {
-  id           String  @id @default(uuid())
-  name         String
-  type         String
-  riskProfile  String
-  floorBalance Float
-  models       Model[]
+  id                  String   @id @default(cuid())
+  name                String   @unique
+  apiEndpoint         String?
+  authEnvVar          String?  // e.g., "XAI_API_KEY"
+  riskProfile         String   @default("low") // low, medium, high
+  promoBalance        Float    @default(0.0)
+  billingCycleEnd     DateTime @default(now() + 30 days) // Default to monthly
+  isExhausted         Boolean  @default(false)
+  cooldownUntil       DateTime?
+  dailySpendTarget    Float?   // Computed per cycle
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  models              Model[]
+  sessions            ArbitrageSession[]
 }
 
 model Model {
-  id              String           @id @default(uuid())
-  providerId      String
-  provider        Provider         @relation(fields: [providerId], references: [id])
-  name            String
-  contextSize     Int
-  arbitrageScores ArbitrageScore[]
+  id                  String   @id @default(cuid())
+  name                String   @unique // e.g., "grok-3"
+  providerId          String
+  provider            Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  inputCostPerMillion Float    @default(0.0)
+  outputCostPerMillion Float   @default(0.0)
+  isBeta              Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([providerId])
 }
 
-model ArbitrageScore {
-  id            String    @id @default(uuid())
-  modelId       String
-  model         Model     @relation(fields: [modelId], references: [id])
-  taskTag       String
-  eloRating     Float
-  cooldownUntil DateTime?
+model ArbitrageSession {
+  id             String   @id @default(cuid())
+  providerId     String
+  provider       Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  sessionId      String   // External session reference
+  spendSoFar     Float    @default(0.0)
+  cooldownUntil  DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([providerId])
+  @@index([cooldownUntil])
 }
+
+// Existing models assumed; add indexes for timestamps

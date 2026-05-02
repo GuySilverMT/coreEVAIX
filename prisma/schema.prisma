@@ -8,49 +8,36 @@ datasource db {
 }
 
 model Provider {
-  id                  String   @id @default(cuid())
-  name                String   @unique
-  apiEndpoint         String?
-  authEnvVar          String?  // e.g., "XAI_API_KEY"
-  riskProfile         String   @default("low") // low, medium, high
-  promoBalance        Float    @default(0.0)
-  billingCycleEnd     DateTime @default(now() + 30 days) // Default to monthly
-  isExhausted         Boolean  @default(false)
-  cooldownUntil       DateTime?
-  dailySpendTarget    Float?   // Computed per cycle
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-
-  models              Model[]
-  sessions            ArbitrageSession[]
+  id              String           @id @default(cuid())
+  name            String           @unique
+  baseUrl         String           @map("BaseUrl")
+  authEnvKey      String           @map("AuthEnvKey")
+  riskProfile     String           @default("LOW")
+  promoBalance    Float            @default(0.0) @map("PromoBalance")
+  billingCycleEnd DateTime?        @map("BillingCycleEnd")
+  exhaustedUntil  DateTime?        @map("ExhaustedUntil")
+  totalSpent      Float            @default(0.0) @map("TotalSpent")
+  models          Model[]
 }
 
 model Model {
-  id                  String   @id @default(cuid())
-  name                String   @unique // e.g., "grok-3"
-  providerId          String
-  provider            Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  inputCostPerMillion Float    @default(0.0)
-  outputCostPerMillion Float   @default(0.0)
-  isBeta              Boolean  @default(false)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id              String           @id @default(cuid())
+  providerId      String
+  name            String
+  contextSize     Int
+  provider        Provider         @relation(fields: [providerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  arbitrageScores ArbitrageScore[]
 
-  @@index([providerId])
+  @@unique([name, providerId])
 }
 
-model ArbitrageSession {
-  id             String   @id @default(cuid())
-  providerId     String
-  provider       Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  sessionId      String   // External session reference
-  spendSoFar     Float    @default(0.0)
-  cooldownUntil  DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+model ArbitrageScore {
+  id              String    @id @default(cuid())
+  modelId         String
+  taskTag         String
+  eloRating       Float
+  cooldownUntil   DateTime?
+  model           Model     @relation(fields: [modelId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  @@index([providerId])
-  @@index([cooldownUntil])
+  @@unique([modelId, taskTag])
 }
-
-// Existing models assumed; add indexes for timestamps

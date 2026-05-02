@@ -1,69 +1,43 @@
-# Entangled Markdown Plan: Generalized Arbitrage Engine with Daily Pacing
+>RESEARCH
 
-## Research Phase (evaix-fetch Integration)
-Before constructing the architecture, evaix-fetch was invoked to gather contextual research on key concepts:
+To gather context for designing the generalized Arbitrage Engine with Daily Pacing, I invoke evaix-fetch for the following queries:
 
-- **Query 1: AI Provider Arbitrage and Cost Management**  
-  Fetched data on arbitrage strategies in AI APIs (e.g., routing queries between providers like xAI's Grok models, OpenAI, Anthropic) to minimize costs while maximizing quality. Key insights: Dynamic routing based on latency, cost per token, and promotional credits; common pitfalls include rate limits and billing cycles that require pacing to avoid exhaustion.
-
-- **Query 2: Prisma Schema Design for Financial and Scheduling Models**  
-  Retrieved best practices for Prisma schemas in Node.js environments handling financial entities (e.g., balances, cycles) and scheduling (e.g., cooldowns, timestamps). Emphasized relational integrity between providers and models, with fields for costs (input/output per million tokens) and environmental keys for auth.
-
-- **Query 3: Daily Pacing Algorithms in Budgeted Systems**  
-  Pulled examples from cloud spending optimizers (e.g., AWS Budgets, GCP pacing) adapted to API usage. Core pattern: Phase-based governors that accelerate initial spending to unlock incentives, then decelerate to spread remaining budget evenly across a cycle, using midnight resets for daily exhaustion flags.
-
-- **Query 4: Seeding Databases for AI Model Fleets**  
-  Gathered patterns for seed scripts in Prisma, focusing on populating catalogs of AI models (e.g., xAI's Grok-3, Grok-4-fast) with pricing data from public APIs/docs. Ensured inclusion of variant-specific costs and proxy fallbacks.
-
-- **Query 5: Session Initiation Bypasses in Agentic Systems**  
-  Researched macro-agent patterns for session management, confirming bypass mechanisms like ZERO_SPEND_PROXY to route traffic without triggering full arbitration when exhausted.
-
-This research informs a high-level architecture that generalizes across providers while enforcing pacing to optimize promotional balances.
-
-## High-Level Architecture Plan
-
-### Step 1: Prisma Schema Updates
-Design the database schema to support provider configurations, model pricing, and pacing mechanics without exposing implementation details.
-
-- **Provider Model Enhancements**: Extend the existing Provider entity to include configurable attributes for integration and financial tracking. This ensures each provider (e.g., xAI, OpenAI) can store unique operational details like base API endpoints, authentication via environment variables, risk profiles for routing decisions (e.g., low-risk for production), current promotional balance thresholds, and billing cycle endpoints (e.g., end date for monthly resets).
+- evaix-fetch: "Prisma schema best practices for adding fields like BaseUrl, AuthEnvKey, RiskProfile, PromoBalance, BillingCycleEnd to a Provider model, and CooldownUntil, InputCostPerM, OutputCostPerM to a Models model in a Node.js/TypeScript environment."
   
-- **Arbitrage Session and Model Extensions**: Introduce or update fields in session-related models to track temporal and cost constraints. Add cooldown timestamps to prevent rapid-fire queries post-exhaustion, and per-model cost metrics (input tokens per million and output tokens per million) to enable precise spend calculations during routing.
+- evaix-fetch: "xAI Grok model fleet details including grok-3, grok-4-fast, and associated pricing structures for input/output tokens per million, promo balances, and billing cycles."
 
-- **Relational Structure**: Establish one-to-many relationships where Providers link to multiple Models, allowing fleet-wide seeding (e.g., xAI's Grok variants). Include indexes on timestamps (e.g., CooldownUntil, BillingCycleEnd) for efficient queries in pacing logic.
+- evaix-fetch: "High-level architecture patterns for arbitrage engines in multi-provider AI routing systems, focusing on daily spend pacing, phase-based governors (e.g., sprint to threshold then paced spending), exhaustion flagging, and proxy routing to zero-spend fallbacks."
 
-This schema forms the foundational data layer, queried by the arbitrage engine for real-time decisions.
+- evaix-fetch: "Seed script patterns in Prisma for populating databases with provider fleets, models, and cost data, ensuring compatibility with TypeScript and environment variables."
 
-### Step 2: 2-Phase Governor in Arbitrage Engine (src/arbitrage.ts Planning)
-Architect a modular routing system in the arbitrage module that implements a governor to control spend velocity across providers, balancing aggression with sustainability.
+- evaix-fetch: "Bypass mechanisms in session initiation for macro agents in AI orchestration systems, maintaining compatibility with existing initiateJulesSession without introducing pacing conflicts."
 
-- **Phase 1: Sprint to Promo Unlock**: Configure an initial acceleration mode that prioritizes high-volume routing to qualifying providers until a predefined promotional threshold is met (e.g., 80% of PromoBalance utilized). This phase routes aggressively to models with favorable risk profiles, monitoring total spend via aggregated cost queries from the schema.
+>PLAN
 
-- **Phase 2: Dynamic Daily Pacing**: Transition to a conservative mode post-threshold, where the system computes a DailySpendTarget by dividing the remaining PromoBalance by the number of days until BillingCycleEnd. Integrate a pacing calculator that adjusts routing weights in real-time based on current usage against this target. If the target is hit intra-day, mark the provider as EXHAUSTED, enforcing a cooldown until the next midnight reset, and redirect all subsequent requests to a ZERO_SPEND_PROXY (a fallback router that minimizes or halts spend).
+## High-Level Architecture for Generalized Arbitrage Engine with Daily Pacing
 
-- **Governor Integration**: Embed the phases within a central arbitrator that evaluates provider states on each request. Include hooks for session initiation (preserving the MACRO_AGENT bypass for initiateJulesSession to allow direct access without full pacing enforcement). Ensure the design supports generalization across any provider fleet by parameterizing phases via schema configs.
+### 1. Prisma Schema Updates
+- Extend the Provider model to include configurable attributes for integration and financial tracking: BaseUrl for API endpoints, AuthEnvKey for secure authentication, RiskProfile for tolerance levels in routing decisions, PromoBalance for tracking promotional credits, and BillingCycleEnd for cycle management.
+- Enhance the Models model to support operational and cost metrics: CooldownUntil for temporary unavailability periods, InputCostPerM for input token pricing, and OutputCostPerM for output token pricing.
+- Ensure schema migrations maintain backward compatibility, with default values for new fields to avoid disrupting existing data flows.
 
-This engine operates as a decision layer, interfacing with upstream request handlers and downstream API calls.
+### 2. src/arbitrage.ts with 2-Phase Governor
+- Architect the core arbitrage logic as a modular engine that evaluates provider eligibility based on real-time balances and pacing rules.
+- Implement Phase 1 (Sprint Mode): Prioritize providers with untapped promo potential, aggressively routing requests until a $5 spend threshold per provider is met, unlocking further promo utilization without exceeding risk profiles.
+- Transition to Phase 2 (Paced Mode): Compute a dynamic DailySpendTarget by dividing the remaining PromoBalance by the number of days until BillingCycleEnd, enforcing this cap per provider to optimize credit exhaustion.
+- Introduce exhaustion handling: Upon reaching the DailySpendTarget, mark the provider as EXHAUSTED, apply a cooldown until the next midnight (UTC-aligned), and redirect all subsequent requests to a ZERO_SPEND_PROXY for fallback routing to non-promo providers.
+- Integrate decision logic with existing routing hooks, ensuring the governor evaluates phases sequentially and logs transitions for auditability.
 
-### Step 3: Seed Script for xAI Fleet (src/seed-models.ts)
-Plan a one-time initialization script to populate the database with a comprehensive model catalog, focusing on xAI's ecosystem while allowing extensibility.
+### 3. Seed Script for xAI Fleet (src/seed-models.ts)
+- Design a one-time initialization script that populates the database with the full xAI provider fleet, including models like grok-3, grok-4-fast, and variants.
+- Structure data ingestion to include model-specific details: names, capabilities, default pricing (e.g., input/output costs per million tokens), and provider linkages with initial PromoBalance and BillingCycleEnd values derived from xAI documentation.
+- Make the script idempotent, using Prisma's upsert operations to avoid duplicates, and configurable via environment variables for sensitive data like BaseUrl and AuthEnvKey.
+- Include validation steps to verify seeded data integrity post-execution, such as cross-checking costs against official rates.
 
-- **Fleet Definition**: Catalog core xAI models (e.g., grok-3 for general tasks, grok-4-fast for low-latency, plus variants like grok-beta) with associated metadata: provider linkage, pricing tiers (input/output costs per million tokens sourced from research), and default risk profiles.
+### 4. MACRO_AGENT Bypass Maintenance
+- Preserve the existing bypass logic in initiateJulesSession to exempt macro-level agents from arbitrage pacing, allowing direct provider access without governor interference.
+- Ensure this exemption is scoped narrowly to session initiation, preventing leakage into paced routing flows, and document it as a configurable flag for future overrides.
 
-- **Seeding Workflow**: Structure the script to connect to the Prisma client, perform upsert operations to avoid duplicates, and batch-insert pricing data. Include logic to set initial PromoBalance and BillingCycleEnd based on configurable defaults (e.g., monthly cycles ending on the 1st).
-
-- **Extensibility**: Design with modular data sources (e.g., JSON imports or API pulls) to easily add non-xAI providers, ensuring the seed aligns with the updated schema for cooldowns and costs.
-
-This script runs during deployment or migrations, bootstrapping the system for immediate arbitrage operations.
-
-### Step 4: MACRO_AGENT Bypass Preservation
-Incorporate a conditional override in the arbitrage flow for initiateJulesSession, routing it directly through the MACRO_AGENT pathway without invoking the full governor or pacing checks. This maintains specialized session handling while isolating it from daily spend limits, queried via provider flags in the schema.
-
-## Overall System Flow
-- **Request Ingress**: Incoming queries hit the arbitrator, which fetches provider/model states from Prisma.
-- **Decision Loop**: Apply 2-Phase Governor to select optimal route; fallback to ZERO_SPEND_PROXY on exhaustion.
-- **Post-Routing**: Log costs for balance updates; enforce cooldowns via timestamp checks.
-- **Reset Mechanism**: Daily midnight cron-like trigger (architected as a scheduled task) to clear EXHAUSTED flags and recalculate targets.
-
-This architecture ensures scalable, paced arbitrage that maximizes value from promotions without over-spending.
+This architecture ensures scalable, promo-optimized routing across providers while enforcing daily pacing to maximize value before billing cycles reset. All components remain high-level, deferring implementation to subsequent entangled phases.
 
 >ROUTED_TO: ENTANGLER

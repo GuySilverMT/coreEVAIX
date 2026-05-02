@@ -40,26 +40,30 @@ export class CodeValidator {
   static assertSafePath(filepath: string) {
     const normalized = path.normalize(filepath);
     const filename = path.basename(normalized);
-    
     if (FORBIDDEN_FILES.includes(filename) || normalized.includes('.skill.md')) {
       throw new SecurityFault(`Agents are strictly forbidden from modifying ${filename}.`);
     }
-
     const isAllowedDir = ALLOWED_DIRECTORIES.some(dir => normalized.startsWith(dir));
     if (!isAllowedDir) {
       throw new SecurityFault(`Path ${filepath} is outside allowed working directories: ${ALLOWED_DIRECTORIES.join(', ')}`);
     }
   }
 
-  static async validateTypeScript(content: string): Promise<void> {
-    const tempFile = 'temp_validation.ts';
+  static async validateTypeScript(filepath: string, newContent: string): Promise<void> {
+    const backupContent = await fs.readFile(filepath, 'utf-8').catch(() => null);
     try {
-      await fs.writeFile(tempFile, content, 'utf-8');
-      await execAsync(`npx tsc --noEmit ${tempFile}`);
+      await fs.mkdir(path.dirname(filepath), { recursive: true });
+      await fs.writeFile(filepath, newContent, 'utf-8');
+      // Validate the whole project using tsconfig.json
+      await execAsync(`npx tsc --noEmit`);
     } catch (error: any) {
+      // Rollback
+      if (backupContent !== null) {
+        await fs.writeFile(filepath, backupContent, 'utf-8');
+      } else {
+        await fs.unlink(filepath).catch(() => {});
+      }
       throw new ValidationFault(`TypeScript compilation failed:\n${error.stdout || error.message}`);
-    } finally {
-      await fs.unlink(tempFile).catch(() => {});
     }
   }
 
@@ -80,44 +84,42 @@ async function parseActiveState(content: string): Promise<CommandBlock[]> {
   const lines = content.split('\n');
   let i = 0;
 
+  console.log(`[DEBUG-PARSER] Analyzing ${lines.length} lines of ACTIVE_STATE.md...`);
+
   while (i < lines.length) {
-    const line = lines[i] as string;
+    const rawLine = lines[i] as string;
+    const line = rawLine.trim();
 
     if (line.startsWith('>CMD:')) {
-      const cmd = line.substring('>CMD:'.length).trim();
+      console.log(`[DEBUG-PARSER] MATCH: Found >CMD:`);
+      const cmd = rawLine.substring(rawLine.indexOf('>CMD:') + 5).trim();
       blocks.push({ type: BlockType.CMD, content: cmd });
       i++;
     } else if (line.startsWith('```typescript')) {
+      console.log(`[DEBUG-PARSER] MATCH: Found TypeScript block`);
       let tsContent = '';
       i++; 
-      while (i < lines.length && !(lines[i] as string).startsWith('```')) {
+      while (i < lines.length && !(lines[i] as string).trim().startsWith('```')) {
         tsContent += (lines[i] as string) + '\n';
         i++;
       }
       blocks.push({ type: BlockType.TS, content: tsContent });
       i++; 
     } else if (line.startsWith('>PATCH:')) {
-      const filepath = line.substring('>PATCH:'.length).trim();
+      console.log(`[DEBUG-PARSER] MATCH: Found >PATCH:`);
+      const filepath = rawLine.substring(rawLine.indexOf('>PATCH:') + 7).trim();
       i++;
-
-      let search = '';
-      let replace = '';
-      let inSearch = false;
-      let inReplace = false;
+      let search = ''; let replace = ''; let inSearch = false; let inReplace = false;
 
       while (i < lines.length) {
         const pLine = lines[i] as string;
-        if (pLine.startsWith('>SEARCH:')) {
-          inSearch = true;
-          inReplace = false;
-          i++;
-        } else if (pLine.startsWith('>REPLACE:')) {
-          inSearch = false;
-          inReplace = true;
-          i++;
+        if (pLine.trim().startsWith('>SEARCH:')) {
+          inSearch = true; inReplace = false; i++;
+        } else if (pLine.trim().startsWith('>REPLACE:')) {
+          inSearch = false; inReplace = true; i++;
         } else if (
-          pLine.startsWith('>CMD:') || pLine.startsWith('```') || 
-          pLine.startsWith('>PATCH:') || pLine.startsWith('>WRITE:') || 
+          pLine.trim().startsWith('>CMD:') || pLine.trim().startsWith('```') || 
+          pLine.trim().startsWith('>PATCH:') || pLine.trim().startsWith('>WRITE:') || 
           (!inSearch && !inReplace && pLine.trim() !== '')
         ) {
           break;
@@ -127,45 +129,42 @@ async function parseActiveState(content: string): Promise<CommandBlock[]> {
           i++;
         }
       }
-
       if (search.endsWith('\n')) search = search.slice(0, -1);
       if (replace.endsWith('\n')) replace = replace.slice(0, -1);
-
-      blocks.push({
-        type: BlockType.PATCH,
-        content: '',
-        patchDetails: { filepath, search, replace }
-      });
+      blocks.push({ type: BlockType.PATCH, content: '', patchDetails: { filepath, search, replace } });
     } else if (line.startsWith('>WRITE:')) {
-      const filepath = line.substring('>WRITE:'.length).trim();
+      console.log(`[DEBUG-PARSER] MATCH: Found >WRITE:`);
+      const filepath = rawLine.substring(rawLine.indexOf('>WRITE:') + 7).trim();
       i++; 
-
       let writeContent = '';
-      if (i < lines.length && (lines[i] as string).startsWith('```')) {
+      if (i < lines.length && (lines[i] as string).trim().startsWith('```')) {
         i++; 
-        while (i < lines.length && !(lines[i] as string).startsWith('```')) {
+        while (i < lines.length && !(lines[i] as string).trim().startsWith('```')) {
           writeContent += (lines[i] as string) + '\n';
           i++;
         }
-        if (i < lines.length && (lines[i] as string).startsWith('```')) i++;
+        if (i < lines.length && (lines[i] as string).trim().startsWith('```')) i++;
       }
-
-      blocks.push({
-        type: BlockType.WRITE,
-        content: writeContent,
-        writeDetails: { filepath }
-      });
+      blocks.push({ type: BlockType.WRITE, content: writeContent, writeDetails: { filepath } });
+    } else if (line.startsWith('>ROUTED_TO:')) {
+      console.log(`[DEBUG-PARSER] MATCH: Found >ROUTED_TO:`);
+      const role = rawLine.substring(rawLine.indexOf('>ROUTED_TO:') + 11).trim();
+      console.log(`[DEBUG-PARSER] Extracting role: [${role}]`);
+      blocks.push({ type: BlockType.CMD, content: `npx tsx src/agent-runner.ts ${role}` });
+      i++;
     } else {
+      if (line.length > 0) {
+        console.log(`[DEBUG-PARSER] IGNORING: ${line.substring(0, 50)}...`);
+      }
       i++;
     }
   }
-
   return blocks;
 }
 
 export async function executeBlocks(blocks: CommandBlock[]) {
+  console.log(`\n[DEBUG-EXEC] Preparing to execute ${blocks.length} blocks...`);
   for (const block of blocks) {
-    // Check global blocklist first
     const contentToCheck = block.content || block.writeDetails?.filepath || block.patchDetails?.filepath || '';
     if (BLOCKLIST_REGEX.test(contentToCheck)) {
       console.log(`>KERNEL_INTERCEPT: Blocklist violation detected.`);
@@ -175,7 +174,6 @@ export async function executeBlocks(blocks: CommandBlock[]) {
     try {
       if (block.type === BlockType.WRITE || block.type === BlockType.PATCH) {
         const filepath = block.writeDetails?.filepath || block.patchDetails!.filepath;
-        
         CodeValidator.assertSafePath(filepath);
         let proposedContent = block.content;
 
@@ -189,67 +187,71 @@ export async function executeBlocks(blocks: CommandBlock[]) {
         }
 
         if (filepath.endsWith('.ts')) {
-          await CodeValidator.validateTypeScript(proposedContent);
+          await CodeValidator.validateTypeScript(filepath, proposedContent);
         } else if (filepath.endsWith('.prisma')) {
           await CodeValidator.validatePrismaSchema(filepath, proposedContent);
+        } else {
+          // Normal files (like markdown or JSON)
+          await fs.mkdir(path.dirname(filepath), { recursive: true });
+          await fs.writeFile(filepath, proposedContent, 'utf-8');
         }
 
-        // 3. Commit the change if all validations pass
-        await fs.mkdir(path.dirname(filepath), { recursive: true });
-        await fs.writeFile(filepath, proposedContent, 'utf-8');
         console.log(`>KERNEL: Successfully committed and validated ${filepath}`);
         
       } else if (block.type === BlockType.CMD) {
         console.log(`>KERNEL: Executing CMD: ${block.content}`);
         const { stdout, stderr } = await execAsync(block.content);
-        if (stdout) console.log(stdout);
-        if (stderr) console.error(stderr);
+        if (stdout) console.log(`[STDOUT]\n${stdout}`);
+        if (stderr) console.error(`[STDERR]\n${stderr}`);
       } else if (block.type === BlockType.TS) {
         console.log(`>KERNEL: Executing TS block...`);
         await fs.writeFile(TEMP_TS_FILE, block.content, 'utf-8');
         try {
           const { stdout, stderr } = await execAsync(`npx tsx ${TEMP_TS_FILE}`);
-          if (stdout) console.log(stdout);
-          if (stderr) console.error(stderr);
+          if (stdout) console.log(`[STDOUT]\n${stdout}`);
+          if (stderr) console.error(`[STDERR]\n${stderr}`);
         } finally {
           await fs.unlink(TEMP_TS_FILE).catch(() => {});
         }
       }
-
     } catch (err: any) {
-      // CRITICAL: Graceful degradation and feedback loop
       console.error(`>KERNEL_INTERCEPT: ${err.message}`);
-      
-      // Write the error back to the active state or an error log so the Auditor reads it on the next tick
-      const errorReport = `\n>AUDIT_ALERT: Operation on ${block.writeDetails?.filepath || block.patchDetails?.filepath || 'Command'} failed.\n\`\`\`text\n${err.message}\n\`\`\`\n`;
-      await fs.appendFile('ACTIVE_STATE.md', errorReport, 'utf-8');
-      
-      return; // Halt this batch, let the swarm read the error and try again
+      const errorReport = `\n>AUDIT_ALERT: Operation failed.\n\`\`\`text\n${err.message}\n\`\`\`\n`;
+      await fs.writeFile('ACTIVE_STATE.md', errorReport, 'utf-8'); // Keeps the buffer clear!
+      return; 
     }
   }
+  console.log(`[DEBUG-EXEC] Execution batch complete.\n`);
 }
 
-// Main Entry Point
 async function main() {
-  console.log(`Starting Resilient EVAIX Kernel. Watching ${ACTIVE_STATE_FILE}...`);
+  console.log(`[SYSTEM] Starting Resilient EVAIX Kernel with enhanced telemetry...`);
+  console.log(`[SYSTEM] Watching ${ACTIVE_STATE_FILE} for changes...`);
 
   const watcher = chokidar.watch(ACTIVE_STATE_FILE, { 
     persistent: true,
     awaitWriteFinish: {
-      stabilityThreshold: 1000, // Wait 1 second after the last write to ensure the LLM is done
+      stabilityThreshold: 1000, 
       pollInterval: 250
     }
   });
 
   watcher.on('change', async () => {
+    console.log(`\n==================================================`);
+    console.log(`[DEBUG-WATCHER] File change detected on ${ACTIVE_STATE_FILE}`);
     try {
       const content = await fs.readFile(ACTIVE_STATE_FILE, 'utf-8');
-      if (!content.trim()) return;
+      if (!content.trim()) {
+        console.log(`[DEBUG-WATCHER] File is empty. Ignoring.`);
+        return;
+      }
+      console.log(`[DEBUG-WATCHER] Raw content length: ${content.length} bytes`);
 
       const blocks = await parseActiveState(content);
       if (blocks.length > 0) {
-        console.log(`>KERNEL: Detected ${blocks.length} blocks. Executing...`);
         await executeBlocks(blocks);
+      } else {
+        console.log(`[DEBUG-WATCHER] No actionable blocks found. Sleeping.`);
       }
     } catch (err) {
       console.error(`>KERNEL_WATCH_ERROR: ${err}`);

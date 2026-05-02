@@ -11,5 +11,8 @@ EVAIX Core operates on an Entangled Architecture, which means the system runs by
 - **Code Execution:** TypeScript code must be enclosed within standard ````typescript```` blocks.
 The Kernel continuously watches and parses these Markdown files, extracting and executing the embedded commands and code blocks.
 
+### The Patching Protocol
+To preserve tokens and avoid rewriting massive files, agents must utilize the patching protocol when modifying existing files. Agents must use the `>PATCH: [filepath]` syntax, providing the exact `>SEARCH:` string literal and the exact `>REPLACE:` string literal to apply targeted modifications.
+
 ## The Arbitrage Routing
 The Arbitrage Routing system dictates how language models are vetted, selected, and assigned to specific tasks. Models are routed based on their suitability for the requested operation, balancing performance, cost, and speed. Models that fail tasks repeatedly are monitored by the Auditor, and their tasks can be revoked and reassigned to maintain system stability and efficiency.
